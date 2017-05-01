@@ -30,46 +30,42 @@ struct Gamma
 
 vector<Gamma> List[7];
 
-void swap(uint8_t &a, uint8_t &b)
+
+void swap_bits(uint8_t &a, uint8_t &b, uint8_t &a_i, uint8_t &b_i) 
 {
-	uint8_t tmp = a;
-	a = b;
-	b = tmp;
+	uint8_t tmp_b = ((b >> b_i) & 1) << a_i;	
+	b = (b & ~(1 << b_i)) | (((a >> a_i) & 1) << b_i);
+	a = (a & ~(1 << a_i)) | tmp_b;
 }
 
 uint16_t encrypt_round(uint16_t data, uint16_t key = 0)
 {
 	data ^= key;
+
 	uint8_t data_blocks[4] = { 0 };
-	uint8_t data_bits[16] = { 0 };
 	uint16_t result = { 0 };
-	for (uint8_t i = 1;i < 5;i++)
+
+	for (uint8_t i = 0;i < 4;i++)
 	{
-		data_blocks[i - 1] = (data >> ((i - 1) * 4)) % 16;
+		data_blocks[i] = (data >> (i * 4)) & 15;
 	}
 
 	for (uint8_t i = 0;i < 4;i++)
 	{
 		data_blocks[i] = S[data_blocks[i]];
-		for (uint8_t j = 0;j < 4;j++)
+	}
+
+	for (uint8_t i = 0; i<4; i++){
+		for (uint8_t j = i + 1; j < 4; j++)
 		{
-			data_bits[4 * i + j] = (data_blocks[i] >> j) % 2;
+			swap_bits(data_blocks[i], data_blocks[j], j, i);
 		}
 	}
 
-	for (uint8_t i = 5;i <= 15;i += 5)
-	{
-		swap(data_bits[i - 1], data_bits[i - 4]);
+	for (uint8_t i = 0;i < 4;i++) {
+		result += data_blocks[i] << (i * 4);
 	}
-
-	swap(data_bits[2], data_bits[8]);
-	swap(data_bits[3], data_bits[12]);
-	swap(data_bits[7], data_bits[13]);
-
-	for (uint8_t i = 0;i < 16;i++) {
-		result += (data_bits[i] << i);
-	}
-
+	
 	return result;
 }
 
@@ -77,40 +73,24 @@ uint16_t decrypt_round(uint16_t data, uint16_t key = 0)
 {
 	uint16_t result = 0;
 	uint8_t data_blocks[4] = { 0 };
-	uint8_t data_bits[16] = { 0 };
 
-	for (uint8_t i = 1;i < 5;i++)
+	for (uint8_t i = 0;i < 4;i++)
 	{
-		data_blocks[i - 1] = (data >> ((i - 1) * 4)) % 16;
+		data_blocks[i] = (data >> (i * 4)) & 15;
+	}
+
+	for (uint8_t i = 0; i<4; i++) {
+		for (uint8_t j = i + 1; j < 4; j++)
+		{
+			swap_bits(data_blocks[i], data_blocks[j], j, i);
+		}
 	}
 
 	for (uint8_t i = 0;i < 4;i++)
 	{
-		for (uint8_t j = 0;j < 4;j++)
-		{
-			data_bits[4 * i + j] = (data_blocks[i] >> j) % 2;
-		}
-		data_blocks[i] = 0;
+		result += S_rev[data_blocks[i]] << (4 * i);
 	}
 
-	for (uint8_t i = 5;i <= 15;i += 5)
-	{
-		swap(data_bits[i - 1], data_bits[i - 4]);
-	}
-
-	swap(data_bits[2], data_bits[8]);
-	swap(data_bits[3], data_bits[12]);
-	swap(data_bits[7], data_bits[13]);
-
-	for (uint8_t i = 0;i < 4;i++)
-	{
-		for (uint8_t j = 0;j < 4;j++)
-		{
-			data_blocks[i] += data_bits[4 * i + j] << j;
-		}
-		data_blocks[i] = S_rev[data_blocks[i]];
-		result += data_blocks[i] << (4 * i);
-	}
 	result ^= key;
 	return result;
 }
@@ -119,35 +99,20 @@ void encrypt_file(string infile, string outfile, string keyname)
 {
 	uint16_t r_keys[7] = { 0 };
 
-	vector<uint8_t> key(14, 0);
-
 	ifstream keyfile(keyname.c_str(), ios::in | ios::binary);
-	keyfile.read((char*)&key[0], key.size());
-	keyfile.close();
-
 	ifstream datafile(infile.c_str(), ios::in | ios::binary);
-
-	datafile.ignore(std::numeric_limits<std::streamsize>::max());
-	std::streamsize length = datafile.gcount();
-	datafile.clear();
-	datafile.seekg(0, std::ios_base::beg);
-
 	ofstream outdata(outfile.c_str(), ios::out | ios::binary);
-
-	vector<uint8_t> data_ar(length, 0);
-
-	datafile.read((char*)&data_ar[0], data_ar.size());
-	datafile.close();
 
 	for (uint8_t i = 0;i < 7;i++)
 	{
-		r_keys[i] = key[2 * i] + (key[2 * i + 1] << 8);
+		keyfile.read((char*)&r_keys[i], sizeof(uint16_t));
 	}
 
-	for (uint32_t i = 0;i < data_ar.size();i = i + 2)
-	{
-		uint16_t data = data_ar[i] + (data_ar[i + 1] << 8);
+	keyfile.close();
 
+	while (!datafile.eof()) {
+		uint16_t data;
+		datafile.read((char*)&data, sizeof(uint16_t));
 		for (uint8_t r = 0;r < 6;r++)
 		{
 			data = encrypt_round(data, r_keys[r]);
@@ -156,6 +121,7 @@ void encrypt_file(string infile, string outfile, string keyname)
 		outdata.write((char*)&data, sizeof(uint16_t));
 	}
 
+	datafile.close();
 	outdata.close();
 }
 
@@ -163,42 +129,29 @@ void decrypt_file(string infile, string outfile, string keyname)
 {
 	uint16_t r_keys[7] = { 0 };
 
-	vector<uint8_t> key(14, 0);
-
 	ifstream keyfile(keyname.c_str(), ios::in | ios::binary);
-	keyfile.read((char*)&key[0], key.size());
-	keyfile.close();
-
 	ifstream datafile(infile.c_str(), ios::in | ios::binary);
-
-	datafile.ignore(std::numeric_limits<std::streamsize>::max());
-	std::streamsize length = datafile.gcount();
-	datafile.clear();
-	datafile.seekg(0, std::ios_base::beg);
-
 	ofstream outdata(outfile.c_str(), ios::out | ios::binary);
-
-	vector<uint8_t> data_ar(length, 0);
-
-	datafile.read((char*)&data_ar[0], data_ar.size());
-	datafile.close();
-
+	
 	for (uint8_t i = 0;i < 7;i++)
 	{
-		r_keys[i] = key[2 * i] + (key[2 * i + 1] << 8);
+		keyfile.read((char*)&r_keys[i], sizeof(uint16_t));
 	}
 
-	for (uint32_t i = 0;i < data_ar.size();i = i + 2)
-	{
-		uint16_t data = data_ar[i] + (data_ar[i + 1] << 8);
+	keyfile.close();
+
+	while (!datafile.eof()) {
+		uint16_t data;
+		datafile.read((char*)&data, sizeof(uint16_t));
 		data ^= r_keys[6];
-		for (uint8_t r = 5;r < 6;r--)
-		{
-			data = decrypt_round(data, r_keys[r]);
-		}
-		outdata.write((char*)&data, sizeof(uint16_t));
+			for (uint8_t r = 5;r < 6;r--)
+			{
+				data = decrypt_round(data, r_keys[r]);
+			}
+			outdata.write((char*)&data, sizeof(uint16_t));
 	}
 
+	datafile.close();
 	outdata.close();
 }
 
@@ -246,7 +199,7 @@ vector<Gamma> get_UB(vector<Gamma> prev)
 
 void last_round_attack(uint16_t beta,string path = "data2/X")
 {
-	for (int i = 0;i < 65535;i++) 
+	for (int i = 0;i < 65535;i++)
 	{
 		string name = path + to_string(i) + ".txt.bin";
 		string name1 = path + "'" + to_string(i) + ".txt.bin";
@@ -277,13 +230,11 @@ void last_round_attack(uint16_t beta,string path = "data2/X")
 	uint16_t ans = 0;
 	for (int i = 0; i < 65536; i++)
 	{
-		if (keys[i] > max)
-		{
-			ans = i;
-			max = keys[i];
+		if (keys[i] > 1)
+		{			
+			cout << hex << i << " " << keys[i] << endl;
 		}
 	}
-	cout << ans << " " << max << endl;
 }
 
 void get_pa(int tmp)
@@ -305,7 +256,7 @@ void get_pa(int tmp)
 						max = j.p;
 						b = j.b;
 						out << "max = " << max << " a=" << (int)a << " b=" << (int)b << endl;
-						cout << "max = " << max << " a=" << (int)a << " b=" << (int)b << endl;
+						cout  << "max = " << max << " a=" << (int)a << " b=" << (int)b << endl;
 					}
 				}
 			}
@@ -360,11 +311,13 @@ void make_stat(uint16_t alpha, string path = "data2/X")
 	}
 }
 
+
 int main()
 {
 	//get_max_d6();
 	//make_stat(1280);
-	last_round_attack(4368);
+	//last_round_attack(34944);
+
 	system("PAUSE");
 	return 0;
 }
